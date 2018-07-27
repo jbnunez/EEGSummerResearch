@@ -9,20 +9,27 @@ from sklearn.model_selection import train_test_split
 This file holds the generator for eeg neural net training which
 augments the eeg data with the distance of the sample from the 
 multivariate gaussian distributions for each of the events
-'''
+''' 
 
 '''
-The distance used can be either mahalanobis distance or (and I know this is not technically distance,
+The distance used can be either mahalanobis distance or (this is not technically distance,
 but it serves a similar function) the probability under a gaussian mixture model, ignoring the 
 constant factor of 1 over root two pi.  The constant factor is likely irrelevant to the neural net
 since it essentially rescales all the data with the weights
 '''
 
+'''
+This class supports unaugmented training, so it is the only one used in producing any final
+versions of trained networks
+'''
+
+
 class DataGenerator(keras.utils.Sequence):
 
     def __init__(self, batch_size=30, dim1=32, n_evals=16,
-        target_dim=6, steps_back=10, shuffle=False, mode='event', dist='maha'):
+        target_dim=6, steps_back=50, shuffle=False, mode='event', dist='maha'):
         '''Initialization'''
+        self.mode = mode
         self.batch_size = batch_size
         self.steps_back = steps_back 
         self.target_dim = target_dim
@@ -30,35 +37,41 @@ class DataGenerator(keras.utils.Sequence):
         self.file_lens = pickle.load(open("file_lengths", "rb"))
         self.data = pickle.load(open("eeg_train_data_arrs", "rb"))
         self.labels = pickle.load(open("eeg_train_label_arrs", "rb"))
-        if mode=='event':
-            self.evecs = np.load('eeg_event_inv_evecs.npy')
-            self.evals = np.load('eeg_event_inv_evals.npy')
-            self.means = np.load('eeg_event_means.npy')
-        elif mode=='sub_event':
-            self.evecs = np.load('eeg_sub_event_inv_evecs.npy')
-            self.evecs = np.concatenate((self.evecs[:,0,:,:],self.evecs[:,1,:,:]))
-            self.evals = np.load('eeg_sub_event_inv_evals.npy')
-            self.evals = np.concatenate((self.evals[:,0,:],self.evals[:,1,:]))
-            self.means = np.load('eeg_sub_event_means.npy')
-            self.means = np.concatenate((self.means[:,0,:],self.means[:,1,:]))
-        else:
-            raise ValueError("Unrecognized mode for covariance matrices")
-        if dist=='gmm':
+        if mode!='unaugmented':
             if mode=='event':
-                self.norms = np.load('eeg_event_evals.npy')
-                self.norms = self.norms[:,:-n_evals]
-                self.norms = np.prod(self.norms, axis=1)
+                self.evecs = np.load('eeg_event_inv_evecs.npy')
+                self.evals = np.load('eeg_event_inv_evals.npy')
+                self.means = np.load('eeg_event_means.npy')
             elif mode=='sub_event':
-                self.norms = np.load('eeg_sub_event_evals.npy')
-                self.norms = np.concatenate((self.norms[:,0,:],self.norms[:,1,:]))
-                self.norms = self.norms[:,:-n_evals]
-                self.norms = np.prod(self.norms, axis=1)
-        self.evecs = self.evecs[:,:,:-n_evals]
-        self.evals = self.evals[:,:-n_evals]
-        self.evals = np.array([np.diag(e) for e in self.evals])
-        self.num_centers = self.evals.shape[0]
+                self.evecs = np.load('eeg_sub_event_inv_evecs.npy')
+                self.evecs = np.concatenate((self.evecs[:,0,:,:],self.evecs[:,1,:,:]))
+                self.evals = np.load('eeg_sub_event_inv_evals.npy')
+                self.evals = np.concatenate((self.evals[:,0,:],self.evals[:,1,:]))
+                self.means = np.load('eeg_sub_event_means.npy')
+                self.means = np.concatenate((self.means[:,0,:],self.means[:,1,:]))
+
+            else:
+                raise ValueError("Unrecognized mode for covariance matrices")
+
+            if dist=='gmm':
+                if mode=='event':
+                    self.norms = np.load('eeg_event_evals.npy')
+                    self.norms = self.norms[:,:-n_evals]
+                    self.norms = np.prod(self.norms, axis=1)
+                elif mode=='sub_event':
+                    self.norms = np.load('eeg_sub_event_evals.npy')
+                    self.norms = np.concatenate((self.norms[:,0,:],self.norms[:,1,:]))
+                    self.norms = self.norms[:,:-n_evals]
+                    self.norms = np.prod(self.norms, axis=1)
+            self.evecs = self.evecs[:,:,:-n_evals]
+            self.evals = self.evals[:,:-n_evals]
+            self.evals = np.array([np.diag(e) for e in self.evals])
+            self.num_centers = self.evals.shape[0]
+            #if the input is being augmented, dimension is larger
+            self.dim = (steps_back, dim1+self.num_centers)
+        else:
+            self.dim = (steps_back, dim1)
         self.fill_list_IDs()
-        self.dim = (steps_back, dim1+self.num_centers)
         self.dist = dist
         self.shuffle = shuffle
         self.on_epoch_end()
@@ -139,7 +152,10 @@ class DataGenerator(keras.utils.Sequence):
         # Store sample
             
             eeg_feats = self.data[ID][ind-self.steps_back:ind,:]
-            feats = [self.add_distances(feat) for feat in eeg_feats]
+            if self.mode!='unaugmented':
+                feats = [self.add_distances(feat) for feat in eeg_feats]
+            else:
+                feats = eeg_feats
 
             X[i,:] = np.array(feats)
             
@@ -148,7 +164,24 @@ class DataGenerator(keras.utils.Sequence):
             y[i,:] = self.labels[ID][ind-1,:]
 
         return X, y
-
+    
+    
+    def test_generation(self, num_epochs):
+        '''
+        Generate the test data set from the IDs witheld from training
+        '''
+        xsamples=[]
+        ysamples=[]
+        np.random.shuffle(self.test_IDs)
+        for i in range(num_epochs):
+        
+            indexes = self.test_IDs[i*self.batch_size:(i+1)*self.batch_size]
+            x,y = self.__data_generation(indexes)
+            xsamples.append(x)
+            ysamples.append(y)
+        X = np.concatenate(xsamples)
+        y = np.concatenate(ysamples)
+        return X, y
 
     def __getitem__(self, index):
         'Generate one batch of data'

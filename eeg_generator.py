@@ -1,19 +1,14 @@
-#eeg_generator_fast.py
+#eeg_generator.py
 import numpy as np
 import pandas as pd
 import keras
 import pickle
 
-'''
-functionally equivalent to eeg_generator.py, but significantly faster because it loads and uses a pickled version of the
-data rather than fetching the data from the files downloaded from kaggle
-'''
-
 
 class DataGenerator(keras.utils.Sequence):
 
     def __init__(self, batch_size=30, dim1=32, 
-        target_dim=6, steps_back=10, shuffle=False):
+        target_dim=6, steps_back=10, shuffle=True):
         'Initialization'
         #dimension is equal to the 400 features from the convolutional encoder
         #plus 200 features from the covariance matrix encoder
@@ -22,37 +17,25 @@ class DataGenerator(keras.utils.Sequence):
         self.steps_back = steps_back 
         self.target_dim = target_dim
         self.file_IDs = pickle.load(open("file_IDs", "rb"))
-        #print(self.file_IDs)
         self.file_lens = pickle.load(open("file_lengths", "rb"))
-        self.data = pickle.load(open("eeg_train_data_arrs", "rb"))
-        self.labels = pickle.load(open("eeg_train_label_arrs", "rb"))
-
         self.fill_list_IDs()
 
         self.shuffle = shuffle
         self.on_epoch_end()
 
-
-
     def get_num_classes(self):
         return self.target_dim
 
-
-
     def fill_list_IDs(self):
-        dt = np.dtype([('name', np.unicode_, 35), ('index', np.uint32)])
+        dt = np.dtype([('name', np.unicode_, 21), ('index', np.uint16)])
         self.list_IDs = np.empty(self.num_samples(), dtype=dt)
 
         ind = 0
         for ID in self.file_IDs:
             for i in range(self.steps_back, self.file_lens[ID]):
-                if i<self.steps_back:
-                    print('what the fuck is going on')
                 self.list_IDs[ind] = (ID, i)
                 ind += 1
 
-        print(ind, self.num_samples())
-        print("list_IDs filled")
 
 
     def on_epoch_end(self):
@@ -88,20 +71,11 @@ class DataGenerator(keras.utils.Sequence):
         for i, (ID, ind) in enumerate(list_IDs_temp):
         # Store sample
             #list_IDs is an 
-            #print(ID)
-            #ourID = str(ID)
-            if ind<self.steps_back:
-                print("\n\n\nwhat in the fuck", ind, "\n\n\n\n")
 
-            temp = self.data[ID][ind-self.steps_back:ind,:]
-            # if temp.shape != self.dim:
-            #     print("\n\n\n\n\n\n wut", i, ID, ind)
-            X[i,:] = temp
-            
-            temp2 = self.labels[ID][ind-1,:]
-            # if temp2.shape != (self.target_dim,):
-            #     print("also wut", i, ID, ind, temp2.shape)
-            y[i,:] = temp2
+            X[i,:] = np.array(pd.read_csv(ID+'data.csv', index_col=0))[ind-self.steps_back:ind,:]
+           
+            y[i,:] = np.array(pd.read_csv(ID+'events.csv', index_col=0))[ind-1,:]
+
         #conv_encoded = self.conv_encoder.predict(X=conv_input)
 
 
