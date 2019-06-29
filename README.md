@@ -7,3 +7,5 @@ the covariance matrix-based distances from event cluster centers.
 
 Data source:
 https://www.kaggle.com/c/grasp-and-lift-eeg-detection
+
+All of this code was generated in a research capacity where I was the sole individual working on the project, so it is poorly documented. Apologies.
